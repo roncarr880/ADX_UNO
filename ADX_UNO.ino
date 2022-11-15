@@ -12,7 +12,8 @@
  *      direction of the arrow long pressed.
  *      If calibrating with a transmit signal, the buttons will seem reversed, right arrow moves the transmit frequency
  *      down.
- *      If it doesn't work this way for you on receive, you are listening on lower side band.
+ *      
+ *      CAT control is TenTec Argonaut V at 9600 baud.
  *      
  */
 
@@ -93,8 +94,10 @@ long cal;
 long cal_write_pending;
 volatile uint16_t raw_tone;
 volatile uint8_t tone_flag;
-volatile uint8_t holdoff;     // ignore zero cross detect during I2C traffic
 
+                          // ignore zero cross detect during I2C traffic
+#define FSKON   (TIMSK1 = 1 << ICIE1)
+#define FSKOFF  (TIMSK1 = 0)
 
 void setup() {
 int temp;
@@ -149,7 +152,7 @@ int temp;
    TCCR1B = 0x81;                   // noise cancel bit
    //TCCR1B = 0xc1;                   // rising clock on timer, don't think it really matters
    ACSR = (1<<ACIC) + 2;            // enable capture mode on falling edge 3 ==rising edge
-   TIMSK1 = 1 << ICIE1;             // enable capture interrupt
+   FSKON;                           // enable capture interrupt
 
 }
 
@@ -158,10 +161,6 @@ ISR( TIMER1_CAPT_vect ){
 static uint16_t  prev;
 uint16_t now;
 
-   if( holdoff ){                   // disable during I2C transmissions
-      prev = ICR1;
-      return;
-   }
    now = ICR1;
    raw_tone = now - prev;
    prev = now;
@@ -175,10 +174,10 @@ void tx(){
   i2cd( SI5351, 3, 0xff );         // clocks off
   digitalWrite( RX_EN, LOW );      // rx disable switch
   transmitting = 1;
-  holdoff = 1;
+  FSKOFF;
   si_pll_x(PLLB, freq + i_tone, bands[band].divider, 0.0 );      // tune and start with prev tone
   i2cd( SI5351, 3, 0xff ^ 1 );     // clock 0 on, tx on tones detected
-  holdoff = 0;
+  FSKON;
 }
 
 // what needs to change to enter rx mode
@@ -186,10 +185,10 @@ void rx(){
 
    i2cd( SI5351, 3, 0xff );      // turn off clocks
    transmitting = 0;
-   holdoff = 1;
+   FSKOFF;
    band_change3();               // back to rx clock frequency
    i2cd( SI5351, 3, 0xff ^ 2 );  // rx clock on
-   holdoff = 0;
+   FSKON;
    digitalWrite( RX_EN, HIGH );  // rx enabled
 }
 
@@ -237,6 +236,8 @@ void vox_check(){
 uint32_t  tm;
 uint16_t  raw;
 
+  if( digitalRead( SW_TX ) == LOW ) return;   // Tune Mode with TX button pressed
+  
   raw = 0;
   if( transmitting == 0 ){          // do we have any capture events
      noInterrupts();
@@ -280,10 +281,10 @@ static uint8_t mod;                         // reduce some of the I2C traffic / 
       val =  16000000.0 / (float)raw;
       i_tone = val;
       f_tone = val - (float)i_tone;
-      holdoff = 1;                            // ignore zero cross duing I2C 
+      FSKOFF;                                 // ignore zero cross duing I2C 
       if( i_tone > 250 && i_tone < 3000 ) si_pll_x(PLLB, freq + i_tone, bands[band].divider, f_tone );
       else i_tone = 1900;                     // save a safe in band value
-      holdoff = 0;
+      FSKON;
    }
 
 }
